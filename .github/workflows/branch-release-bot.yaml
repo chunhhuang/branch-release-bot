@@ -1,0 +1,128 @@
+name: Create next version branch
+
+on:
+  schedule:
+    # Thursday 22:00 UTC == 2:00 PM PST
+    - cron: "0 22 * * 4"
+  workflow_dispatch:
+    inputs:
+      next_branch:
+        description: "Override next version branch (e.g., 19.1). Leave empty to auto-calculate."
+        required: false
+        default: ""
+      base_branch:
+        description: "Override base branch to branch from (e.g., main, release/19.0)"
+        required: false
+        default: "main"
+
+permissions:
+  contents: write
+
+jobs:
+  create-version-branch:
+    runs-on: ubuntu-latest
+
+    env:
+      # Defaults for scheduled runs
+      DEFAULT_BASE_BRANCH: "main"
+      DEFAULT_NEXT_BRANCH_OVERRIDE: ""
+
+      VERSION_BRANCH_REGEX: "^[0-9]+\\.[0-9]+$"
+
+    steps:
+      - name: Checkout (full history + branches)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve base branch
+        id: base
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INPUT_BASE="${{ github.event.inputs.base_branch || '' }}"
+
+          if [[ -n "$INPUT_BASE" ]]; then
+            BASE="$INPUT_BASE"
+            SOURCE="workflow_dispatch input"
+          else
+            BASE="$DEFAULT_BASE_BRANCH"
+            SOURCE="DEFAULT_BASE_BRANCH"
+          fi
+
+          echo "base_branch=$BASE" >> "$GITHUB_OUTPUT"
+          echo "source=$SOURCE" >> "$GITHUB_OUTPUT"
+
+      - name: Determine next version branch
+        id: next
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NEXT_INPUT="${{ github.event.inputs.next_branch || '' }}"
+          NEXT_OVERRIDE="${DEFAULT_NEXT_BRANCH_OVERRIDE}"
+
+          if [[ -n "$NEXT_INPUT" ]]; then
+            NEXT="$NEXT_INPUT"
+            SOURCE="workflow_dispatch input"
+          elif [[ -n "$NEXT_OVERRIDE" ]]; then
+            NEXT="$NEXT_OVERRIDE"
+            SOURCE="DEFAULT_NEXT_BRANCH_OVERRIDE"
+          else
+            git fetch --all --prune
+
+            LATEST="$(git for-each-ref --format='%(refname:short)' refs/remotes/origin/ \
+              | sed 's|^origin/||' \
+              | grep -E "${VERSION_BRANCH_REGEX}" || true)"
+
+            if [[ -z "$LATEST" ]]; then
+              echo "No version branches found. Provide next_branch manually."
+              exit 1
+            fi
+
+            PREV="$(echo "$LATEST" | awk -F. '{print $1, $2, $0}' \
+              | sort -n -k1,1 -k2,2 \
+              | tail -n1 \
+              | awk '{print $3}')"
+
+            MAJOR="$(cut -d. -f1 <<< "$PREV")"
+            MINOR="$(cut -d. -f2 <<< "$PREV")"
+            NEXT="${MAJOR}.$((MINOR + 1))"
+            SOURCE="auto-calc from $PREV"
+          fi
+
+          if ! [[ "$NEXT" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid next branch: $NEXT"
+            exit 1
+          fi
+
+          echo "next_branch=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "source=$SOURCE" >> "$GITHUB_OUTPUT"
+
+      - name: Create branch if it doesn't exist
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NEXT="${{ steps.next.outputs.next_branch }}"
+          BASE="${{ steps.base.outputs.base_branch }}"
+
+          echo "Next branch: $NEXT"
+          echo "Base branch: $BASE"
+          echo "Base source: ${{ steps.base.outputs.source }}"
+
+          git fetch origin "$BASE" --prune
+
+          if git ls-remote --exit-code --heads origin "$NEXT" >/dev/null 2>&1; then
+            echo "Branch '$NEXT' already exists. Skipping."
+            exit 0
+          fi
+
+          git checkout -B "$NEXT" "origin/$BASE"
+          git push origin "$NEXT"
+
+      - name: Summary
+        run: |
+          echo "Created branch '${{ steps.next.outputs.next_branch }}'"
+          echo "Based on '${{ steps.base.outputs.base_branch }}'"

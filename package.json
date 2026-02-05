@@ -1,0 +1,20 @@
+{
+  "name": "branch-release-bot",
+  "version": "1.0.0",
+  "description": "The github action to automatically create new version branch",
+  "homepage": "https://github.com/chunhhuang/branch-release-bot#readme",
+  "bugs": {
+    "url": "https://github.com/chunhhuang/branch-release-bot/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chunhhuang/branch-release-bot.git"
+  },
+  "license": "ISC",
+  "author": "chunhhuang@paypal.com",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}
